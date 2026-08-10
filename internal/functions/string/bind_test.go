@@ -578,6 +578,100 @@ func TestLike(t *testing.T) {
 	}
 }
 
+func TestLikeUnits(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		desc    string
+		subject value.Value
+		pattern value.Value
+		want    bool
+	}{
+		{
+			desc:    "underscore is one character",
+			subject: value.StringValue("あい"),
+			pattern: value.StringValue("__"),
+			want:    true,
+		},
+		{
+			desc:    "underscore is not one byte",
+			subject: value.StringValue("あ"),
+			pattern: value.StringValue("___"),
+			want:    false,
+		},
+		{
+			desc:    "escaped underscore is literal",
+			subject: value.StringValue("a_c"),
+			pattern: value.StringValue(`a\_c`),
+			want:    true,
+		},
+		{
+			desc:    "escaped percent is literal",
+			subject: value.StringValue("50%"),
+			pattern: value.StringValue(`%\%`),
+			want:    true,
+		},
+		{
+			desc:    "escaped backslash is literal",
+			subject: value.StringValue(`a\b`),
+			pattern: value.StringValue(`a\\b`),
+			want:    true,
+		},
+		{
+			desc:    "percent matches a newline",
+			subject: value.StringValue("a\nb"),
+			pattern: value.StringValue("a%b"),
+			want:    true,
+		},
+		{
+			desc:    "bytes match byte by byte",
+			subject: value.BytesValue("abc"),
+			pattern: value.BytesValue("a_c"),
+			want:    true,
+		},
+		{
+			desc:    "underscore is one byte in bytes",
+			subject: value.BytesValue("あ"),
+			pattern: value.BytesValue("___"),
+			want:    true,
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			t.Parallel()
+			got, err := strfn.BindLike(tc.subject, tc.pattern)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got == nil {
+				t.Fatal("expected a BOOL, got NULL")
+			}
+			b, err := got.ToBool()
+			if err != nil {
+				t.Fatalf("ToBool: %v", err)
+			}
+			if b != tc.want {
+				t.Errorf("got %v, want %v", b, tc.want)
+			}
+		})
+	}
+
+	t.Run("pattern ending in a backslash", func(t *testing.T) {
+		t.Parallel()
+		if _, err := strfn.BindLike(value.StringValue("a"), value.StringValue(`a\`)); err == nil {
+			t.Error("expected an error")
+		}
+	})
+	t.Run("mixed STRING and BYTES operands", func(t *testing.T) {
+		t.Parallel()
+		if _, err := strfn.BindLike(value.BytesValue("abc"), value.StringValue("a%")); err == nil {
+			t.Error("expected an error")
+		}
+		if _, err := strfn.BindLike(value.StringValue("abc"), value.BytesValue("a%")); err == nil {
+			t.Error("expected an error")
+		}
+	})
+}
+
 func TestRegexpFamily(t *testing.T) {
 	t.Parallel()
 

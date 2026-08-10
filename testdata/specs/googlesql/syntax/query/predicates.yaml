@@ -26,6 +26,161 @@ cases:
     expected:
       rows:
         - [true, false]
+  # Upstream Examples (operators.md#like_operator, "Examples").
+  - desc: LIKE prefix pattern (upstream Example)
+    sql: SELECT 'apple' LIKE 'a%'
+    expected:
+      rows:
+        - [true]
+  - desc: LIKE with the pattern in the left operand (upstream Example)
+    sql: SELECT '%a' LIKE 'apple'
+    expected:
+      rows:
+        - [false]
+  - desc: NOT LIKE prefix pattern (upstream Example)
+    sql: SELECT 'apple' NOT LIKE 'a%'
+    expected:
+      rows:
+        - [false]
+  - desc: NOT LIKE with the pattern in the left operand (upstream Example)
+    sql: SELECT '%a' NOT LIKE 'apple'
+    expected:
+      rows:
+        - [true]
+  # Both NULL-literal Examples are documented as "Produces an error".
+  - desc: LIKE with a literal NULL value errors (upstream Example)
+    sql: SELECT NULL LIKE 'a%'
+    expected:
+      error:
+        contains: LIKE
+  - desc: LIKE with a literal NULL pattern errors (upstream Example)
+    sql: SELECT 'apple' LIKE NULL
+    expected:
+      error:
+        contains: LIKE
+  # operators.md#like_operator: "An underscore (_) matches a single
+  # character or byte."
+  - desc: underscore matches exactly one character
+    sql: SELECT 'abc' LIKE '_bc' AS lead, 'abc' LIKE 'a_c' AS middle, 'abc' LIKE '___' AS all_three, 'abc' LIKE '____' AS too_many
+    expected:
+      rows:
+        - [true, true, true, false]
+  - desc: underscore counts characters in a STRING pattern
+    sql: SELECT 'あ' LIKE '_' AS one_character, 'あア' LIKE '__' AS two_characters, 'あ' LIKE '___' AS not_utf8_bytes
+    expected:
+      rows:
+        - [true, true, false]
+  # operators.md#like_operator: "A percent sign (%) matches any number of
+  # characters or bytes." Any character includes a newline.
+  - desc: wildcards match a newline
+    sql: SELECT 'a\nb' LIKE 'a%b' AS percent, 'a\nb' LIKE 'a_b' AS underscore
+    expected:
+      rows:
+        - [true, true]
+  # operators.md#like_operator: "You can escape \, _, or % using two
+  # backslashes. For example, \\%. If you are using raw strings, only a
+  # single backslash is required. For example, r'\%'."
+  - desc: escaped wildcards match literally
+    sql: SELECT '50%' LIKE '%\\%' AS percent, 'a_c' LIKE 'a\\_c' AS underscore, 'abc' LIKE 'a\\_c' AS escaped_underscore_is_literal
+    expected:
+      rows:
+        - [true, true, false]
+  - desc: escaped backslash matches a literal backslash
+    sql: SELECT 'a\\b' LIKE 'a\\\\b'
+    expected:
+      rows:
+        - [true]
+  - desc: raw-string pattern escapes with a single backslash
+    sql: SELECT 'a_c' LIKE r'a\_c' AS escaped, 'abc' LIKE r'a\_c' AS literal_underscore
+    expected:
+      rows:
+        - [true, false]
+  # A backslash escapes the following character, so a pattern may not end
+  # with one: the reference implementation rejects it with
+  # "LIKE pattern ends with a backslash".
+  - desc: pattern ending in a backslash errors
+    sql: SELECT 'a' LIKE 'a\\'
+    expected:
+      error:
+        contains: backslash
+  # "any number of characters or bytes" / "a single character or byte" --
+  # LIKE takes BYTES operands, where the units are bytes.
+  - desc: LIKE on BYTES operands
+    sql: SELECT b'abc' LIKE b'a%' AS prefix, b'abc' LIKE b'%' AS anything, b'abc' LIKE b'a_c' AS underscore, b'abc' LIKE b'b%' AS miss
+    expected:
+      rows:
+        - [true, true, true, false]
+  - desc: underscore matches one byte in a BYTES pattern
+    sql: SELECT b'\xe3\x81\x82' LIKE b'___' AS three_bytes, b'\xe3\x81\x82' LIKE b'_' AS not_one_character
+    expected:
+      rows:
+        - [true, false]
+  - desc: LIKE over runtime values
+    sql: |-
+      SELECT
+        (SELECT s FROM UNNEST(['abc']) AS s) LIKE 'a_c' AS str,
+        (SELECT b FROM UNNEST([b'abc']) AS b) LIKE b'a_c' AS bytes
+    expected:
+      rows:
+        - [true, true]
+  - desc: LIKE against several patterns with ARRAY_INCLUDES (upstream Example)
+    sql: |-
+      WITH Words AS
+       (SELECT 'Intend with clarity.' as value UNION ALL
+        SELECT 'Secure with intention.' UNION ALL
+        SELECT 'Clarity and security.')
+      SELECT value
+      FROM Words
+      WHERE ARRAY_INCLUDES(['%ity%', '%and%'], pattern->(Words.value LIKE pattern))
+    expected:
+      unordered: true
+      rows:
+        - ["Intend with clarity."]
+        - ["Clarity and security."]
+  # Upstream collation Examples (operators.md#like_operator). The
+  # remaining und:ci Examples need a Unicode collator (kana and
+  # canonical equivalence, ignorable characters) and collation
+  # compatibility checks, which this spec does not cover yet.
+  - desc: LIKE is case-sensitive without collation (upstream Example)
+    sql: SELECT 'Foo' LIKE '%foo%'
+    expected:
+      rows:
+        - [false]
+  - desc: und:ci collation makes LIKE case-insensitive (upstream Example)
+    sql: SELECT COLLATE('Foo', 'und:ci') LIKE COLLATE('%foo%', 'und:ci')
+    expected:
+      rows:
+        - [true]
+  - desc: und:ci collation makes = case-insensitive (upstream Example)
+    sql: SELECT COLLATE('Foo', 'und:ci') = COLLATE('foo', 'und:ci')
+    expected:
+      rows:
+        - [true]
+  - desc: escaped underscore under und:ci collation (upstream Example)
+    sql: SELECT COLLATE('Foo_', 'und:ci') LIKE COLLATE('%foo\\_%', 'und:ci')
+    expected:
+      rows:
+        - [true]
+  - desc: sharp s differs from ss at the secondary level (upstream Examples)
+    sql: SELECT 'MASSE' LIKE 'Maße' AS plain, COLLATE('MASSE', 'und:ci') LIKE '%Maße%' AS ci_like, COLLATE('MASSE', 'und:ci') = COLLATE('Maße', 'und:ci') AS ci_equal
+    expected:
+      rows:
+        - [false, false, false]
+  - desc: kana subtypes differ without collation (upstream Example)
+    sql: SELECT 'あ' LIKE '%ア%'
+    expected:
+      rows:
+        - [false]
+  - desc: canonically equivalent sequences differ without collation (upstream Example)
+    sql: SELECT 'å' LIKE '%Å%'
+    expected:
+      rows:
+        - [false]
+  - desc: ignorable character is not ignored without collation (upstream Example)
+    sql: SELECT '' LIKE ''
+    expected:
+      rows:
+        - [false]
   - desc: EXISTS subquery
     sql: |-
       SELECT
